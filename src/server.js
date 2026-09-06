@@ -13,6 +13,7 @@
 // A database would buy queries nobody has asked for yet; when the analysis side needs one, the JSONL is the
 // import.
 
+import crypto from "node:crypto";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
@@ -24,6 +25,11 @@ const PORT = parseInt(process.env.PORT || "8080", 10);
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const MAX_RECORDS = parseInt(process.env.MAX_RECORDS || "5000", 10);
 const MAX_BODY = parseInt(process.env.MAX_BODY || "4194304", 10); // 4 MB, ~20k ordinary records
+
+// Reading the records back out is the half of the loop that makes the other half worth anything: a request
+// log nobody can fetch improves nothing. It is a bearer token rather than an open route because the records
+// are what players typed, and they agreed to share them with whoever trains the model, not with the internet.
+const EXPORT_TOKEN = process.env.EXPORT_TOKEN || "";
 
 const RECORDS_DIR = path.join(DATA_DIR, "records");
 const COUNTERS_FILE = path.join(DATA_DIR, "counters.json");
@@ -135,6 +141,15 @@ function recordsFile(mod, version, day) {
   return path.join(RECORDS_DIR, `${safe(mod, "unknown")}-${safe(version, "unknown")}-${day}.jsonl`);
 }
 
+/** Bearer check in constant time, so a wrong token cannot be found one character at a time. */
+function authorised(req) {
+  const header = String(req.get("authorization") || "");
+  const offered = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const a = Buffer.from(offered);
+  const b = Buffer.from(EXPORT_TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 const topOf = (bag, limit) =>
   Object.entries(bag).sort((a, b) => b[1] - a[1]).slice(0, limit).map(([name, n]) => ({ name, count: n }));
 
@@ -203,6 +218,49 @@ app.get("/api/stats", (_req, res) => {
     commands: topOf(counters.commands, 15),
     corrections: topOf(counters.corrections, 15),
   });
+});
+
+/**
+ * Every record, oldest first, as the JSONL the training pipeline reads.
+ *
+ * `since` takes a day (YYYY-MM-DD) and returns that day and later, so a puller can ask for what it has not
+ * seen instead of the whole history. The day is in the file name, so this never opens a file it does not need.
+ */
+app.get("/api/records", (req, res) => {
+  if (!EXPORT_TOKEN) {
+    return res.status(503).json({ ok: false, error: "export is not configured on this server" });
+  }
+  if (!authorised(req)) return res.status(401).json({ ok: false, error: "unauthorised" });
+
+  const since = typeof req.query.since === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.since)
+    ? req.query.since
+    : "";
+
+  let files;
+  try {
+    files = fs.readdirSync(RECORDS_DIR).filter((name) => name.endsWith(".jsonl")).sort();
+  } catch (e) {
+    if (e.code === "ENOENT") return res.type("application/x-ndjson").send("");
+    console.error(`[hash-telemetry] export failed: ${e.message}`);
+    return res.status(500).json({ ok: false, error: "could not read the records" });
+  }
+
+  // <mod>-<version>-<day>.jsonl, and the day is the last three dash-separated pieces of the stem.
+  const dayOf = (name) => name.replace(/\.jsonl$/, "").split("-").slice(-3).join("-");
+  const wanted = since ? files.filter((name) => dayOf(name) >= since) : files;
+
+  res.type("application/x-ndjson");
+  res.set("Cache-Control", "no-store");
+  for (const name of wanted) {
+    try {
+      res.write(fs.readFileSync(path.join(RECORDS_DIR, name), "utf8"));
+    } catch (e) {
+      // One unreadable file must not silently shorten an export the caller will treat as complete.
+      console.error(`[hash-telemetry] export skipped ${name}: ${e.message}`);
+      return res.status(500).end();
+    }
+  }
+  res.end();
 });
 
 app.use(express.static(path.join(__dirname, "..", "public"), { maxAge: "1h", extensions: ["html"] }));
