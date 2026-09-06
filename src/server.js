@@ -41,7 +41,6 @@ function emptyCounters() {
     records: 0,
     uploads: 0,
     outcomes: Object.fromEntries(OUTCOMES.map((o) => [o, 0])),
-    languages: {},
     commands: {},
     corrections: {},
     versions: {},
@@ -103,10 +102,18 @@ function count(record, version, day) {
   }
 
   // The pair that teaches something: what hash answered, and what the player ran instead. Command words only.
+  //
+  // Same word on both sides is not a non-event - it is the argument phase failing, which is the known weak
+  // half of the model (routing 78.5 %, arguments barely ahead of the untuned base). Counting only the
+  // different-word pairs would hide exactly the failure the log was collected to measure.
   if (record.actual) {
-    const proposed = commandWord((record.commands || [])[0]) || "(nothing)";
+    const proposed = commandWord((record.commands || [])[0]);
     const actual = commandWord(record.actual);
-    if (actual && proposed !== actual) bump(counters.corrections, `${proposed} -> ${actual}`);
+    if (actual) {
+      bump(counters.corrections, !proposed ? `(nothing) -> ${actual}`
+        : proposed === actual ? `${actual} (arguments)`
+        : `${proposed} -> ${actual}`);
+    }
   }
 
   if (!counters.firstDay || day < counters.firstDay) counters.firstDay = day;
