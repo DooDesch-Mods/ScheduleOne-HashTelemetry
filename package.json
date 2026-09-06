@@ -1,0 +1,18 @@
+{
+  "name": "hash-telemetry",
+  "version": "1.0.0",
+  "description": "hash.doomods.com - the ingest and public page for the request log players of the hash Schedule I terminal choose to share.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "license": "MIT",
+  "author": "DooDesch"
+}
