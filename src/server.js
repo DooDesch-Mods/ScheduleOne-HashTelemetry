@@ -238,29 +238,38 @@ app.get("/api/records", (req, res) => {
 
   let files;
   try {
-    files = fs.readdirSync(RECORDS_DIR).filter((name) => name.endsWith(".jsonl")).sort();
+    files = fs.readdirSync(RECORDS_DIR).filter((name) => name.endsWith(".jsonl"));
   } catch (e) {
     if (e.code === "ENOENT") return res.type("application/x-ndjson").send("");
     console.error(`[hash-telemetry] export failed: ${e.message}`);
     return res.status(500).json({ ok: false, error: "could not read the records" });
   }
 
-  // <mod>-<version>-<day>.jsonl, and the day is the last three dash-separated pieces of the stem.
+  // <mod>-<version>-<day>.jsonl. Sorting the NAME sorts by mod and version first, which puts a 09-06 file
+  // from one version ahead of a 09-05 file from another - so "oldest first" has to sort on the day.
   const dayOf = (name) => name.replace(/\.jsonl$/, "").split("-").slice(-3).join("-");
-  const wanted = since ? files.filter((name) => dayOf(name) >= since) : files;
+  const wanted = files
+    .filter((name) => !since || dayOf(name) >= since)
+    .sort((a, b) => (dayOf(a) < dayOf(b) ? -1 : dayOf(a) > dayOf(b) ? 1 : a < b ? -1 : 1));
+
+  // Read everything BEFORE answering. Writing the first file commits HTTP 200, and a read that fails after
+  // that ends a clean, well-formed 200 that is simply missing records - which a puller has no way to tell
+  // from a complete one, and whose cursor then advances past the gap for good.
+  const chunks = [];
+  for (const name of wanted) {
+    try {
+      chunks.push(fs.readFileSync(path.join(RECORDS_DIR, name), "utf8"));
+    } catch (e) {
+      console.error(`[hash-telemetry] export aborted at ${name}: ${e.message}`);
+      return res.status(500).json({ ok: false, error: `could not read ${name}` });
+    }
+  }
 
   res.type("application/x-ndjson");
   res.set("Cache-Control", "no-store");
-  for (const name of wanted) {
-    try {
-      res.write(fs.readFileSync(path.join(RECORDS_DIR, name), "utf8"));
-    } catch (e) {
-      // One unreadable file must not silently shorten an export the caller will treat as complete.
-      console.error(`[hash-telemetry] export skipped ${name}: ${e.message}`);
-      return res.status(500).end();
-    }
-  }
-  res.end();
+  // The count the caller can check its own line count against, so a truncated transfer is detectable.
+  res.set("X-Record-Files", String(wanted.length));
+  res.send(chunks.join(""));
 });
 
 app.use(express.static(path.join(__dirname, "..", "public"), { maxAge: "1h", extensions: ["html"] }));
