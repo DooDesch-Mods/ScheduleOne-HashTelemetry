@@ -4,7 +4,7 @@ The ingest and the public page behind [hash.doomods.com](https://hash.doomods.co
 
 > 🛟 **Need help or found a bug?** Get support at [support.doodesch.de/hash](https://support.doodesch.de/hash).
 
-[hash](https://github.com/DooDesch-Mods/ScheduleOne-Hash) turns `# give me five OG Kush` into `give ogkush 5`
+[hash](https://www.nexusmods.com/schedule1/mods/2408) turns `# give me five OG Kush` into `give ogkush 5`
 using a 45 MB model that ships with the mod and runs offline. That model was trained on requests another model
 was asked to invent, and it is judged against 79 hand-written cases - too few to tell apart three training runs
 that scored 14, 16 and 18 of them. Real requests fix the measurement and the training data at once.
